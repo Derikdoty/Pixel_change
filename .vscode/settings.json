@@ -1,0 +1,12 @@
+{
+    "cmake.sourceDirectory": "C:/Users/webon/Documents/Flutter_projects/app_2/flutter_application_2/image_picker3/linux",
+    "C_Cpp.errorSquiggles": "disabled",
+    "files.associations": {
+        "imagequant.h": "c",
+        "stdint.h": "c",
+        "vle.h": "c",
+        "hist.h": "c",
+        "nearest.h": "c",
+        "libimagequant.h": "c"
+    }
+}
