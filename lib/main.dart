@@ -1,9 +1,11 @@
 import 'dart:io';
+import 'dart:typed_data';  
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:image/image.dart' as img; // Alias the image package
+import 'package:image/image.dart' as img;
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:flutter/services.dart';
+import 'imagequant_ffi.dart';  
 
 // Define the NES Palette (EXAMPLE - you'll want a full 64-color NES palette here)
 // Current palette is incomplete for accurate NES-style results.
@@ -219,77 +221,81 @@ class _ImagePickerPageState extends State<ImagePickerPage> {
   }
 
   Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final image = await picker.pickImage(source: ImageSource.gallery);
+  print("=== PICKIMAGE CALLED ===");
+  final picker = ImagePicker();
+  final image = await picker.pickImage(source: ImageSource.gallery);
 
-    if (image != null) {
-      print("Image picked: ${image.path}");
-      final bytes = await image.readAsBytes();
-      final originalImage = img.decodeImage(bytes);
+  if (image != null) {
+    print("✓ Image picked: ${image.path}");
+    final bytes = await image.readAsBytes();
+    final originalImage = img.decodeImage(bytes);
 
-      if (originalImage != null) {
-        print("Image decoded successfully");
-        final resized = img.copyResize(originalImage, width: 128);
+    if (originalImage != null) {
+      print("✓ Image decoded successfully");
+      final stopwatch = Stopwatch()..start();
+      final resized = img.copyResize(originalImage, width: 128);
+      print("✓ Resized to ${resized.width}x${resized.height} in ${stopwatch.elapsedMilliseconds}ms");
+      
+      stopwatch.reset();
+      
+      // Convert image to RGBA byte array
+      final rgbaPixels = Uint8List(resized.width * resized.height * 4);
+      int offset = 0;
+      for (int y = 0; y < resized.height; y++) {
+        for (int x = 0; x < resized.width; x++) {
+          final pixel = resized.getPixel(x, y);
+          rgbaPixels[offset++] = pixel.r.toInt();
+          rgbaPixels[offset++] = pixel.g.toInt();
+          rgbaPixels[offset++] = pixel.b.toInt();
+          rgbaPixels[offset++] = pixel.a.toInt();
+        }
+      }
+      
+      print("✓ RGBA conversion took: ${stopwatch.elapsedMilliseconds}ms");
+      stopwatch.reset();
+
+      // Use libimagequant to quantize
+      print(">>> CALLING LIBIMAGEQUANT <<<");
+      final quantizedColors = ImageQuantFFI.quantizeImage(
+        rgbaPixels: rgbaPixels,
+        width: resized.width,
+        height: resized.height,
+        palette: nesPalette,
+        maxColors: nesPalette.length,
+        ditherLevel: _ditheringIntensity / 10.0,
+      );
+      
+      print("✓ Quantization took: ${stopwatch.elapsedMilliseconds}ms");
+
+      if (quantizedColors != null) {
+        print("✓✓✓ SUCCESS: Using libimagequant result with ${quantizedColors.length} colors");
+        
+        // Convert flat list to 2D grid
         List<List<Color>> grid = [];
-
         for (int y = 0; y < resized.height; y++) {
           List<Color> row = [];
-
           for (int x = 0; x < resized.width; x++) {
-            final pixel = resized.getPixel(x, y);
-
-            final originalColor = Color.fromARGB(
-              pixel.a.toInt(),
-              pixel.r.toInt(),
-              pixel.g.toInt(),
-              pixel.b.toInt(),
-            );
-
-            // Convert to Lab
-            final lab = colorToLab(originalColor);
-
-            // Apply Bayer dithering to L channel
-            final bayerX = x % 4;
-            final bayerY = y % 4;
-            final bayerValue = bayerMatrix4x4[bayerY][bayerX];
-            final threshold = (bayerValue / 16.0 - 0.5) * _ditheringIntensity;
-
-            final adjustedLab = [
-              (lab[0] + threshold).clamp(0, 100).toDouble(),
-              lab[1],
-              lab[2],
-            ];
-
-            final adjustedColor = labToColor(adjustedLab);
-
-            // Use cache to find closest NES color
-            final cacheKey = adjustedColor.value; // Use int as key for consistent hashing
-            final matchedColor = _colorCache.putIfAbsent(
-              cacheKey,
-              () => findClosestNESColorLab(adjustedColor),
-            );
-
-            row.add(matchedColor);
-
-            // Debug print every 10th row
-            if (x == 0 && y % 10 == 0) {
-              print("Row $y starts with color: ${matchedColor.value.toRadixString(16)}");
-            }
+            row.add(quantizedColors[y * resized.width + x]);
           }
-
           grid.add(row);
         }
+
         setState(() {
           _image = File(image.path);
           _pixelGrid = grid;
         });
-      }else {
-        print("Failed to decode image.");
+        
+        print("=== QUANTIZATION COMPLETE ===");
+      } else {
+        print("✗✗✗ FAILED: libimagequant returned null");
       }
-    }else {
-      print("No image picked.");
+    } else {
+      print("✗ Failed to decode image");
     }
+  } else {
+    print("✗ No image picked");
   }
+}
 
 
   void _changePixelColor(int x, int y) async {
